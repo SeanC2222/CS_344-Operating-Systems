@@ -1,0 +1,254 @@
+#!/bin/bash
+#Assignment 1
+#Author: Sean Mulholland
+#Email: mulholls@onid.oregonstate.edu
+#Description: This script will calculate averages and medians of a file of
+#     integers for either their rows or their columns. The data can be piped
+#     in as well through the standard input.
+#!/bin/bash
+
+#Traps signals and removes temporary files
+
+trap "rm -f $$temp_stats; exit 1" INT TERM HUP 
+
+NumArg=$#      #Stores number of arguments for reference
+
+#If there are two arguments, check to see if second argument (file name) can
+#be opened. If not, error message and exit status 1
+if ! [ -r "$2" ] && [ $NumArg -eq 2 ]; then
+   echo "stats: cannot read file $2" 1>&2
+   exit 1
+fi
+
+#If there are wrong number of arguments, echo usage and exit status 1
+if [ $NumArg -gt 2 ] || [ $NumArg -eq 0 ]; then
+
+   echo "Usage: stats {-rows|-cols} [file]" 1>&2
+   exit 1
+fi
+
+
+#If there is 1 argument but its not -r... or -c... echo usage and exit status 1
+Arg1Check=`echo "$1" | head -c 2 | tail -c 1`
+
+if ! [ $Arg1Check = "r" ] && ! [ $Arg1Check = "c" ]; then
+   echo "Usage: stats {-rows|-cols} [file]" 1>&2
+   exit 1
+fi
+
+#If there are 2 arguments and the first argument is -r.... process file 
+#(argument 2) by column, and output average and median of each column
+if [ $(echo $1 | head -c 2 | tail -c 1) = r ] && [ $NumArg -eq 2 ]; then
+
+   SUM_CUR_ROW=0	#Sum of the current row
+   NUM_COLS=0		#Count of total number of columns for calculations
+   #Output heading
+   echo "Average Median"   
+
+   #Get a row
+   while read rowLine; do
+      
+      #For all elements in the row
+      for x in $rowLine; do
+	 #Add value of element to running sum
+	 SUM_CUR_ROW=`expr $SUM_CUR_ROW + $x`
+	 #Store value of element in a temporary file
+	 echo "$x" >> "$$.row.temp_stats"
+	 let NUM_COLS+=1
+      done
+      #Sort the temporary file and store in a new sorted file
+      sort -n "$$.row.temp_stats" > "$$.sorted.row.temp_stats"
+      #Remove unsorted file (no longer needed)
+      rm -f "$$.row.temp_stats"
+      #Find the index of the median in the current row
+      #	 NOTE: By definition if we find the halfway value we find the median
+      #	       If n is the number of elements, and n is odd this will yield
+      #	       a single number. If n is even, we must determine a median value
+      #	       from the two median value. By problem definition we choose the
+      #	       higher of the two values. I.e. if n = 8,
+      #	       median = floor(n / 2) + 1
+      CUR_ROW_MED=`expr $NUM_COLS / 2`
+      let CUR_ROW_MED+=1
+      #Gets Median from sorted temporary file at calculated index
+      while read findMed; do
+	 let CUR_ROW_MED-=1
+	 if [ $CUR_ROW_MED -eq 0 ]; then
+	    CUR_ROW_MED=$findMed
+	    break
+	 fi
+      done < "$$.sorted.row.temp_stats"
+      #Remove the sorted temporary file (no longer needed)
+      rm -f "$$.sorted.row.temp_stats"
+
+      #Find the double the average of the current row
+      #	 NOTE: expr returns an unrounded value of average (i.e. floor average)
+      #	       We can determine if we want to round up by:
+      #	       (2 * s) / n - 2 * (s / n) = VAL
+      #		  where s = SUM_CUR_COL = sum of elements
+      #			n = NUM_ROWS = number of elements
+      #			VAL = 2 * the dropped fraction of our floor average
+      #	       If VAL >= 1, we know that the calculated average must 
+      #	       be incremented, but if they're equal (VAL = 0) no increment is
+      #	       necessary.
+      CUR_ROW_AVE=`expr $SUM_CUR_ROW / $NUM_COLS`
+      let CUR_ROW_AVE*=2
+
+      RND_UP_ROW=`expr 2 \* $SUM_CUR_ROW`
+      RND_UP_ROW=`expr $RND_UP_ROW / $NUM_COLS`
+      RND_UP_ROW=`expr $RND_UP_ROW - $CUR_ROW_AVE`
+
+      let CUR_ROW_AVE/=2
+      #Increment calculated average if necesssary
+      if [ $RND_UP_ROW -eq 1 ]; then
+	 let CUR_ROW_AVE+=1
+      fi
+      #Echo the current row average and current row median with formatting
+      echo -e "$CUR_ROW_AVE\t$CUR_ROW_MED"
+      #Reset the sum and element count
+      let SUM_CUR_ROW=0
+      let NUM_COLS=0
+
+   done < $2
+
+   exit 0
+
+#Else if there are 2 arguments and the first argument is -c.... process file 
+#(argument 2) by column, and output average and median of each column
+elif [ $(echo $1 | head -c 2 | tail -c 1) = c ] && [ $NumArg -eq 2 ]; then
+      
+   COL_COUNT=0		#Count of the number of columns
+
+   #Count the number of columns (assumed uniform through file)
+   read firstLine < $2
+   for x in $firstLine; do
+      let COL_COUNT+=1
+   done
+
+   COL_TO_SUM=0		#Index of Current Column we're summing
+   COL_TEMP_INDEX=0	#Index used to discard values in row up to COL_TO_SUM
+   SUM_CUR_COL=0	#Sum of the current column
+   NUM_ROWS=0		#Count of the number of rows
+
+   echo "Column Averages: "
+   
+   #Traverse each column from COL_TO_SUM = 0, to COL_COUNT   
+   while [ $COL_TO_SUM -lt $COL_COUNT ]; do
+      #While the file has rows, get a row
+      while read currentLine; do
+	 #Count the number of rows
+	 let NUM_ROWS+=1
+	 #Find the column in the current row
+	 for x in $currentLine; do
+	    #When the right index is found
+	    if [ $COL_TEMP_INDEX = $COL_TO_SUM ]; then
+	       #Add to running SUM_CUR_COL
+	       let SUM_CUR_COL+=$x
+	       #Store column in temporary file
+	       echo "$x" >> "$$.col.temp_stats"
+	       break
+	    fi
+	    let COL_TEMP_INDEX+=1
+
+	 done
+
+         let COL_TEMP_INDEX=0
+
+      done < $2
+
+   
+      #Sort column numerically into a temporary file
+      sort -n "$$.col.temp_stats" > "$$.sorted.col.temp_stats"
+      #Remove the old file
+      rm -f "$$.col.temp_stats"
+
+      #Get index of median (i.e. CEIL(NUM_ROWS/2))
+      CUR_COL_MED=`expr $NUM_ROWS / 2`
+      let CUR_COL_MED+=1
+
+      #Get and store median in CUR_COL_MED from sorted temp list
+      while read findMedian; do
+	 let CUR_COL_MED-=1
+	 if [ $CUR_COL_MED -eq 0 ]; then
+	    CUR_COL_MED=$findMedian
+	    break
+	 fi
+      done < "$$.sorted.col.temp_stats"
+      #Remove temporary file
+      rm -f "$$.sorted.col.temp_stats"
+      #Store current median in a temporary file   
+      echo "$CUR_COL_MED" >> "$$.medians.col.temp_stats"
+      
+      #Find the double the average of the current column
+      #	 NOTE: expr returns an unrounded value of average (i.e. floor average)
+      #	       We can determine if we want to round up by:
+      #	       (2 * s) / n - 2 * (s / n) = VAL
+      #		  where s = SUM_CUR_COL = sum of elements
+      #			n = NUM_ROWS = number of elements
+      #			VAL = 2 * the dropped fraction of our floor average
+      #	       If VAL >= 1, we know that the calculated average must 
+      #	       be incremented, but if they're equal (VAL = 0) no increment is
+      #	       necessary.
+      CUR_COL_AVE=`expr $SUM_CUR_COL / $NUM_ROWS`
+      let CUR_COL_AVE*=2
+      
+      RND_UP_COL=`expr 2 \* $SUM_CUR_COL`
+      RND_UP_COL=`expr $RND_UP_COL / $NUM_ROWS`
+      RND_UP_COL=`expr $RND_UP_COL - $CUR_COL_AVE`
+      
+      let CUR_COL_AVE/=2
+      #Round if necessary
+      if [ $RND_UP_COL -eq 1 ]; then
+	 let CUR_COL_AVE+=1
+      fi
+      #Echo the average of the current column
+      echo -n -e "$CUR_COL_AVE\t"
+      #Reset counters, increment current column (COL_TO_SUM)
+      let NUM_ROWS=0
+      let SUM_CUR_COL=0
+      let COL_TO_SUM+=1
+   done
+
+   echo
+   echo "Column Medians: "
+   
+   #Output medians to stdout
+   if [ -r "$$.medians.col.temp_stats" ]; then
+      while read getMedians; do
+	 echo -n -e "$getMedians\t"
+      done < "$$.medians.col.temp_stats"
+      #Remove temporary file that stores medians
+      rm -f "$$.medians.col.temp_stats"
+   fi
+ 
+   echo
+   
+   exit 0
+
+#Else there is 1 argument that IS -r... or -c..., recusively call stats to run
+#on piped input
+else
+
+   #Store piped in data to a temporary file
+   while read pipedLine; do
+      echo "$pipedLine" >> "$$.temp_stats"
+   done
+
+   #Recursively call stats with the proper arguments and temp file
+   stats "$1" "$$.temp_stats"
+   
+   #Store your exit status in case it's not 0
+   EXIT_STATUS=`echo $?`
+
+   #Remove temporary file storing piped data
+   rm -f "$$.temp_stats"
+
+   #If exit status is non-zero, exit with non-zero status
+   if ! [ $EXIT_STATUS -eq 0 ]; then
+      exit $EXIT_STATUS
+   fi
+
+   exit 0
+fi
+
+
+
